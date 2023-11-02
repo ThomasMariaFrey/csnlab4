@@ -48,17 +48,19 @@ for(file in files) {
   colnames(data) <- c("n", "k2")
   
   # Calculate sample size, mean, and standard deviation for n, and k2
-  N <- length(data$n)#correct
-  mu_n <- mean(data$n)#correct
-  sigma_n <- sum((data$n - mu_n) ** 2)/ N #correct
-  mu_k2 <- mean(data$k2)#correct
-  sigma_k2 <- sum((data$k2-mu_n)**2)/N#correct
+  N <- length(data$n)
+  mu_n <- mean(data$n)
+  sigma_n <- sum((data$n - mu_n) ** 2)/ N
+  mu_k2 <- mean(data$k2)
+  sigma_k2 <- sum((data$k2-mu_n)**2)/N
   
   # Check validity of k2 based on provided criteria
   valid_k2 <- all(data$k2 >= 4 - 6/data$n & data$k2 <= data$n - 1)
   
+  
   # Add results to the results data frame
   results <- rbind(results, cbind(Language = gsub(".txt", "", file), N, mu_n, sigma_n, mu_k2, sigma_k2, valid_k2))
+  print(table(results$valid_k2))
   
 }
 
@@ -69,6 +71,47 @@ results <- as.data.frame(results)
 print(results)
 
 ```
+2.1 Checking validity for every entry
+```{r}
+# create empty table for overview data of each language 
+data_overview <- data.frame(Language=character(),
+                            n=integer(),
+                            mu_n=double(),
+                            sigma_n=double(),
+                            mu_x=double(),
+                            sigma_x=double(),
+                            stringsAsFactors=FALSE)
+
+# main
+
+main <- function(lang, filename) {
+  # SECTION: load data
+  data <- data.frame(read.table(filename, header=FALSE, quote=""))
+  
+  # validate if data meets the requirements
+  data$Validation <- (4 - 6 / data$V1 <= data$V2) & (data$V2 <= (data$V1 - 1))
+  print(head(data))
+  print(table(data$Validation))
+  plot(data$V1, data$V2)
+}
+
+source = read.table("./list.txt", 
+         header = TRUE,
+         as.is = c("language","file")
+        )
+
+for (i in 1:nrow(source)) {
+  main(source$language[i], source$file[i]) # check your path
+  if (i >= 1) {
+    break
+  }
+}
+
+# Print Tables
+data_overview
+```
+
+
 
 3.Data Analysis
 We load the information about a collection of dependency trees from sentence in 
@@ -168,6 +211,68 @@ logarithmic transformation:log ⟨d⟩ = b log n + a′. Thereafter we perform a
 linear regression to retrief the parameters of the linear model. There after 
 we receive the RSS and the AIC. Lastyly the parameters giving the best fit are 
 obtained.
+
+Calculating values and parameters for models 1 to 4 and 1+ to 4+
+```{r}
+languages <- c("Arabic","Basque","Catalan","Chinese","Czech","English","Greek",
+               "Hungarian", "Italian", "Turkish")
+column_names <- c("Languages", "0", "1", "2", "3",
+                  "4", "1+", "2+", "3+", "4+")
+column_parameter_names <- c("Languages", "1b", "2a", "2b", "3a",
+                  "3c", "4a", "1+b", "1+d", "2+a","2+b","2+d","3+a","3+c","3+d","4+a","4+d")
+
+#s table
+residualStandardErrorTable <- data.frame(matrix(ncol = 10, nrow = 0))
+names(residualStandardErrorTable) <- column_names
+residualStandardErrorTable <- residualStandardErrorTable[1:10, ]
+residualStandardErrorTable$Languages <- languages
+
+#aic table
+akaikeInformationCriterionTable<- data.frame(matrix(ncol = 10, nrow = 0))
+names(akaikeInformationCriterionTable) <- column_names
+akaikeInformationCriterionTable <- akaikeInformationCriterionTable[1:10, ]
+akaikeInformationCriterionTable$Languages <- languages
+
+#aic delta table
+aicdifferenceTable<- data.frame(matrix(ncol = 10, nrow = 0))
+names(aicdifferenceTable) <- column_names
+aicdifferenceTable <- aicdifferenceTable[1:10, ]
+aicdifferenceTable$Languages <- languages
+
+#columnparametertable
+columnparametertable<- data.frame(matrix(ncol = 17, nrow = 0))
+names(columnparametertable) <- column_parameter_names
+columnparametertable <- columnparametertable[1:10, ]
+columnparametertable$Languages <- languages
+
+i <- 1
+while(i<length(languages)+1){
+  print(languages[i])
+  
+  #Calculating Model 1
+  #Calculating Model 2
+  #Calculating Model 3
+  #Calculating Model 4
+  
+  #Calculating Model 1
+  #Calculating Model 2
+  #Calculating Model 3
+  #Calculating Model 4
+  
+  
+  
+  i<-i+1
+}
+
+#print the created tables
+print(residualStandardErrorTable)
+print(akaikeInformationCriterionTable)
+print(aicdifferenceTable)
+print(columnparametertable)
+
+```
+
+
 
 Doing this for all models with parameters
 ```{r}
