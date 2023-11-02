@@ -214,6 +214,11 @@ obtained.
 
 Calculating values and parameters for models 1 to 4 and 1+ to 4+
 ```{r}
+setwd("~/Desktop/University/CSN-MIRI Complex and Social Networks/Lab/Lab4/data")
+library(lmtest)
+
+
+
 languages <- c("Arabic","Basque","Catalan","Chinese","Czech","English","Greek",
                "Hungarian", "Italian", "Turkish")
 column_names <- c("Languages", "0", "1", "2", "3",
@@ -245,19 +250,79 @@ names(columnparametertable) <- column_parameter_names
 columnparametertable <- columnparametertable[1:10, ]
 columnparametertable$Languages <- languages
 
+#homocesdacityCheckfunction
+homocesdasticityCheck<-function(nonlinear_model){
+  residuals_nonlinear_model <- residuals(nonlinear_model)
+  fitted_nonlinear_model <- fitted(nonlinear_model)
+  # Create a linear model for the squared residuals
+  lm_resid <- lm(residuals_nonlinear_model^2 ~ fitted_nonlinear_model)
+  # Perform the Breusch-Pagan test
+  bp_test_result <- bptest(lm_resid)
+  # Print the test result
+  print(bp_test_result)#debug
+  print(bp_test_result[1])#debug
+  print(bp_test_result[2])#debug
+  print(bp_test_result[3])#debug
+  print(bp_test_result[4])#debug
+  #TODO: Check if any is sensible here.
+  aggregation <- aggregate(Language,list(Language$vertices),mean)
+  print(head(aggregation))
+  if(bp_test_result[4] < 0.05){#if lower than 0.05 indicating the presence of   heteroscedasticity,  take aggregated values
+    #aggregation <- aggregate(. ~ vertices, data = Language, mean)
+    aggregation <- aggregate(Language,list(Language$vertices),mean)
+    
+    linear_model <- lm(log(degree_2nd_moment)~log(vertices), aggregation)
+    a_initial <- exp(coef(linear_model)[1])
+    b_initial <- coef(linear_model)[2]
+    
+    nonlinear_model <- nls(degree_2nd_moment ~ a * vertices^b, data = aggregation, start = list(a = a_initial, b = b_initial), trace = TRUE)
+    return: nonlinear_model
+  }
+  return: nonlinear_model
+}
+
 i <- 1
 while(i<length(languages)+1){
+  
   print(languages[i])
+  string<-paste0(languages[i], "_dependency_tree_metrics.txt")
+  Language = read.table(string, header = FALSE)
+  colnames(Language) = c("vertices","degree_2nd_moment", "mean_length")
+  Language = Language[order(Language$vertices), ]
   
-  #Calculating Model 1
-  #Calculating Model 2
-  #Calculating Model 3
-  #Calculating Model 4
+  #General steps:
+  #1. Calculate sensible starting values
+  #2. Calculate an initial non linear regression model 
+  #3 Check for homocesdasticity, if no take precautions
+  #4 Calculate optimal parameters and values
   
-  #Calculating Model 1
-  #Calculating Model 2
-  #Calculating Model 3
-  #Calculating Model 4
+  #Calculating Model 1 #Mandatory
+  #Calculating Model 2 #Mandatory
+  
+  #1
+  linear_model <- lm(log(degree_2nd_moment)~log(vertices), Language)
+  a_initial <- exp(coef(linear_model)[1])
+  b_initial <- coef(linear_model)[2]
+  #2
+  nonlinear_model <- nls(degree_2nd_moment~a*vertices^b,data=Language,
+  start <- list(a = a_initial, b = b_initial), trace = TRUE)
+  #3
+  #TODO implement this correctly
+  nonlinear_model <- homocesdasticityCheck(nonlinear_model)
+  #4
+  deviance(nonlinear_model)#rss
+  AIC(nonlinear_model)#AIC
+  sqrt(deviance(nonlinear_model)/df.residual(nonlinear_model))#s
+  coef(nonlinear_model)["a"]#a
+  coef(nonlinear_model)["b"]#b
+  
+  #Calculating Model 3 #Mandatory
+  #Calculating Model 4 
+  
+  #Calculating Model 1+ #Mandatory
+  #Calculating Model 2+ #Advanced Exercises
+  #Calculating Model 3+ #Advanced Exercises
+  #Calculating Model 4+
   
   
   
@@ -276,7 +341,6 @@ print(columnparametertable)
 
 Doing this for all models with parameters
 ```{r}
-library(lmtest)
 
 #Find initial values
 linear_model = lm(log(degree_2nd_moment)~log(vertices), Catalan)
