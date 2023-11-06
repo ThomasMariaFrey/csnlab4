@@ -5,74 +5,154 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-Set your working directory and load the required librarys.
 ```{r}
-setwd("~/Desktop/University/CSN-MIRI Complex and Social Networks/Lab/Lab4")
-```
 
-1. Introduction 
-We are part of the <k^2> group. k^2 is defined as its degree 2nd moment. We 
-investigate the scaling of <k^2> as a function of n.
+# imports
 
-2. Data Preparation
-We are reading in the information from the dependency_tree_metrics.tar.gz file.
-The rows of this dataframe contains three columns: n, <k^2> and <d>.
-Here we check the validity of <k^2> and <d> and we create a table containing,
-for each language, that contains the sample size n, the mean and standard 
-deviation of n and the mean and the standard deviation of our target metric
-<k^2>.
-Note: Not all languages satisfy the metrics set forth in 2.(1)!
-```{r}
-# Load necessary libraries
 library(dplyr)
 library(tidyr)
+library(lmtest)
 
-# Set the working directory to the location of your files
-setwd("~/Desktop/University/CSN-MIRI Complex and Social Networks/Lab/Lab4/data")
+# functions
 
-# List all the files in the directory
-files <- list.files(pattern = "*.txt")
+homocesdasticity_check <- function(lang_data, nonlinear_model, mdl,
+                                   a_initial=0, b_initial=0,
+                                   c_initial=0, d_initial=0) {
+  print(sprintf("Model: %s", mdl))
+  print(sprintf("a: %f, b: %f, c: %f, d: %f", a_initial, b_initial, c_initial, d_initial))
+  
+  residuals_nonlinear_model <- residuals(nonlinear_model)
+  fitted_nonlinear_model    <- fitted(nonlinear_model)
+  
+  # Create a linear model for the squared residuals
+  lm_resid <- lm(residuals_nonlinear_model^2 ~ fitted_nonlinear_model)
+  
+  # Perform the Breusch-Pagan test
+  bp_test_result <- bptest(lm_resid)
+  #print(bp_test_result)
+  
+  #TODO: Check if any is sensible here.
+  
+  # lower than 0.05 indicating the presence of heteroscedasticity, take aggregated values
+  show_plot_1  <- FALSE
+  show_plot_2  <- FALSE
+  if(bp_test_result[4] < 0.05) {
+    print("aggregate")
+    if (agg_count <= 2) {
+      show_plot_1  <- TRUE
+      agg_count   <<- agg_count + 1
+    }
+    
+    aggregation <- aggregate(lang_data, list(lang_data$N),mean)
+    
+    if (mdl == "1") {
+      linear_model <- lm(log(K2) ~ log(N), aggregation)
+      b_initial    <- coef(linear_model)[2]
+      result_model <- nls(K2 ~ (N / 2)^b, data=aggregation,
+                          start=list(b=b_initial), trace=TRUE)
+    } else if (mdl == "2") {
+      linear_model <- lm(log(K2) ~ log(N), aggregation)
+      a_initial    <- exp(coef(linear_model)[1])
+      b_initial    <- coef(linear_model)[2]
+      result_model <- nls(K2 ~ a * N^b, data=aggregation,
+                          start=list(a=a_initial, b=b_initial), trace=TRUE)
+    } else if (mdl == "3") {
+      linear_model <- lm(log(K2) ~ N, aggregation)
+      a_initial    <- exp(coef(linear_model)[1])
+      c_initial    <- coef(linear_model)[2]
+      result_model <- nls(K2 ~ a * exp(c * N), data=aggregation,
+                          start=list(a=a_initial, c=c_initial), trace=TRUE)
+    } else if (mdl == "4") {
+      linear_model <- lm(K2 ~ log(N), aggregation)
+      a_initial    <- exp(coef(linear_model)[1])
+      result_model <- nls(K2 ~ a * log(N), data=aggregation,
+                          start=list(a=a_initial), trace=TRUE)
+    } else if (mdl == "1+") {
+      linear_model <- lm(log(K2) ~ log(N), aggregation)
+      b_initial    <- coef(linear_model)[1]
+      d_initial    <- 0
+      result_model <- nls(K2 ~ (N / 2)^b + d, data=aggregation,
+                          start=list(b=b_initial, d=d_initial), trace=TRUE)
+    } else if (mdl == "4+") {
+      linear_model <- lm(K2 ~ log(N), aggregation)
+      a_initial    <- exp(coef(linear_model)[1])
+      d_initial    <- 0
+      result_model <- nls(K2 ~ a * log(N) + d, data=aggregation,
+                          start=list(a=a_initial, d=d_initial), trace=TRUE)
+    }
+  } else {
+    print("no aggregate")
+    if (no_agg_count <= 2) {
+      show_plot_2    <- TRUE
+      no_agg_count  <<- no_agg_count + 1
+    }
+    
+    result_model <- nonlinear_model
+  }
+  
+  # plot data using old values
+  # * in case of aggregation to be able to compare results with aggregation
+  # * in case of no aggregation to confirm that aggregation was not needed
+  if (show_plot_1 | show_plot_2) {
+    plot(lang_data$N, lang_data$K2,
+         main=sprintf("Model: %s, %s", mdl, if (show_plot_1) {"w/ agg"} else {"w/o agg"}))
+    if (mdl == "1") { # f(n) = (n/2)^b
+      b <- coef(nonlinear_model)["b"]
+      lines(lang_data$N, (lang_data$N / 2)^b, type="l", col="red")
+    } else if (mdl == "2") { # f(n) = an^b
+      a <- coef(nonlinear_model)["a"]#2a
+      b <- coef(nonlinear_model)["b"]#2b
+      lines(lang_data$N, a * lang_data$N^b, type="l", col="red")
+    } else if (mdl == "3") { # f(n) = ae^{cn}
+      a <- coef(nonlinear_model)["a"]
+      c <- coef(nonlinear_model)["c"]
+      lines(lang_data$N, a * exp(c * lang_data$N), type="l", col="red")
+    } else if (mdl == "4") { # f(n) = a*log(n)
+      a <- coef(nonlinear_model)["a"]
+      lines(lang_data$N, a * log(lang_data$N), type="l", col="red")
+    } else if (mdl == "1+") { # f(n) = (n/2)^b
+      b <- coef(nonlinear_model)["b"]
+      d <- coef(nonlinear_model)["d"]
+      lines(lang_data$N, (lang_data$N / 2)^b + d, type="l", col="red")
+    } else if (mdl == "4+") { # f(n) = a*log(n)+d
+      a <- coef(nonlinear_model)["a"]
+      d <- coef(nonlinear_model)["d"]
+      lines(lang_data$N, a * log(lang_data$N) + d, type="l", col="red")
+    }
+  }
 
-# Initialize an empty data frame to store results
-results <- data.frame()
-
-# Loop through each file and process the data
-for(file in files) {
+  # plot data using new values (with aggregation)
+  if (show_plot_1) {
+    plot(aggregation$N, aggregation$K2,
+         main=sprintf("Model: %s, %s", mdl, "w/ agg"))
+    if (mdl == "1") { # f(n) = (n/2)^b
+      b <- coef(result_model)["b"]
+      lines(aggregation$N, (aggregation$N / 2)^b, type="l", col="red")
+    } else if (mdl == "2") { # f(n) = an^b
+      a <- coef(result_model)["a"]#2a
+      b <- coef(result_model)["b"]#2b
+      lines(aggregation$N, a * aggregation$N^b, type="l", col="red")
+    } else if (mdl == "3") { # f(n) = ae^{cn}
+      a <- coef(result_model)["a"]
+      c <- coef(result_model)["c"]
+      lines(aggregation$N, a * exp(c * aggregation$N), type="l", col="red")
+    } else if (mdl == "4") { # f(n) = a*log(n)
+      a <- coef(result_model)["a"]
+      lines(aggregation$N, a * log(aggregation$N), type="l", col="red")
+    } else if (mdl == "1+") { # f(n) = (n/2)^b
+      b <- coef(result_model)["b"]
+      d <- coef(result_model)["d"]
+      lines(aggregation$N, (aggregation$N / 2)^b + d, type="l", col="red")
+    } else if (mdl == "4+") { # f(n) = a*log(n)+d
+      a <- coef(result_model)["a"]
+      d <- coef(result_model)["d"]
+      lines(aggregation$N, a * log(aggregation$N) + d, type="l", col="red")
+    }
+  }
   
-  # Read the data from the file
-  data <- read.table(file, header = FALSE)
-  colnames(data) <- c("n", "k2")
-  
-  # Calculate sample size, mean, and standard deviation for n, and k2
-  N <- length(data$n)
-  mu_n <- mean(data$n)
-  sigma_n <- sum((data$n - mu_n) ** 2)/ N
-  mu_k2 <- mean(data$k2)
-  sigma_k2 <- sum((data$k2-mu_n)**2)/N
-  
-  # Check validity of k2 based on provided criteria
-  valid_k2 <- all(data$k2 >= 4 - 6/data$n & data$k2 <= data$n - 1)
-  
-  
-  # Add results to the results data frame
-  results <- rbind(results, cbind(Language = gsub(".txt", "", file), N, mu_n, sigma_n, mu_k2, sigma_k2, valid_k2))
-  print(table(results$valid_k2))
-  
+  return(result_model)
 }
 
-# Convert results to a data frame
-results <- as.data.frame(results)
-
-# Print the results
-print(results)
-
-```
-2.1 Checking validity for every entry
-```{r}
 # create empty table for overview data of each language 
 data_overview <- data.frame(Language=character(),
                             n=integer(),
@@ -82,17 +162,215 @@ data_overview <- data.frame(Language=character(),
                             sigma_x=double(),
                             stringsAsFactors=FALSE)
 
+column_names           <- c("Languages", "0", "1", "2", "3",
+                            "4", "1+", "2+", "3+", "4+")
+column_parameter_names <- c("Languages", "1b", "2a", "2b", "3a",
+                            "3c", "4a", "1+b", "1+d", "2+a", "2+b",
+                            "2+d", "3+a", "3+c", "3+d", "4+a", "4+d")
+
+# s table
+residualStandardErrorTable <- data.frame(matrix(ncol = 10, nrow = 0))
+names(residualStandardErrorTable) <- column_names
+
+# AIC table
+akaikeInformationCriterionTable<- data.frame(matrix(ncol = 10, nrow = 0))
+names(akaikeInformationCriterionTable) <- column_names
+
+# AIC delta table
+aicdifferenceTable<- data.frame(matrix(ncol = 10, nrow = 0))
+names(aicdifferenceTable) <- column_names
+
+# column parameter table
+columnparametertable<- data.frame(matrix(ncol = 17, nrow = 0))
+names(columnparametertable) <- column_parameter_names
+
 # main
 
-main <- function(lang, filename) {
+agg_count    <- 1
+no_agg_count <- 1
+
+main <- function(lang, filename, index) {
   # SECTION: load data
-  data <- data.frame(read.table(filename, header=FALSE, quote=""))
+  lang_data            <- data.frame(read.table(filename, header=FALSE, quote=""))
+  colnames(lang_data)  <- c("N", "K2", "D")
+  lang_data            <- lang_data[order(lang_data$N), ]
   
   # validate if data meets the requirements
-  data$Validation <- (4 - 6 / data$V1 <= data$V2) & (data$V2 <= (data$V1 - 1))
-  print(head(data))
-  print(table(data$Validation))
-  plot(data$V1, data$V2)
+  lang_data$Validation <- (4 - 6 / lang_data$N <= lang_data$K2) &
+                          (lang_data$K2 <= (lang_data$N - 1))
+  #print(head(lang_data))
+  print(lang)
+  print(table(lang_data$Validation))
+  
+  # calculate overview data
+  n        <- length(lang_data$N)
+  mu_n     <- mean(lang_data$N)
+  sigma_n  <- sum((lang_data$N  - mu_n) ** 2) / n
+  mu_k2    <- mean(lang_data$K2)
+  sigma_k2 <- sum((lang_data$K2 - mu_n) ** 2) / n
+  # add to table
+  data_overview[nrow(data_overview) + 1,] <<- list(lang,
+                                                   n,
+                                                   mu_n,
+                                                   sigma_n,
+                                                   mu_k2,
+                                                   sigma_k2)
+  
+  # thomas code here
+  RSSVector       <- numeric(10)
+  AICVector       <- numeric(10)
+  AICDeltaVector  <- numeric(10)
+  ParameterVector <- numeric(17)
+  
+  RSSVector[1]       <- lang
+  AICVector[1]       <- lang
+  AICDeltaVector[1]  <- lang
+  ParameterVector[1] <- lang
+  
+  #Null Model TODO
+  # f(n) = (1 - 1 / N) * (5 - 6 / N)
+  RSS                <- sum((lang_data$K2 - (1 - 1 / lang_data$N) * (5 - 6 / lang_data$N))^2)
+  p                  <- 0
+  RSSVector[2]       <- sqrt(RSS / (n - p))
+  AICVector[2]       <- n * log(2 * pi) + n * log(RSS / n) + n + 2 * (p + 1)
+  AICDeltaVector[2]  <- "-"
+  
+  # General steps:
+  # 1. Calculate sensible starting values
+  # 2. Calculate an initial non linear regression model 
+  # 3. Check for homocesdasticity, if no take precautions
+  # 4. Calculate optimal parameters and values
+  
+  #Calculating Model 1 => MANDATORY
+  #1
+  linear_model <- lm(log(K2)~log(N), lang_data)
+  b_initial    <- coef(linear_model)[2]
+  #2 f(n) = (n/2)^b
+  nonlinear_model <- nls(K2 ~ (N / 2)^b, data=lang_data,
+                         start=list(b=b_initial), trace = TRUE)
+  #3 
+  nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "1",
+                                            b_initial=b_initial)
+  #4
+  RSSVector[3]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[3]       <- AIC(nonlinear_model)
+  AICDeltaVector[3]  <- "-"
+  ParameterVector[2] <- coef(nonlinear_model)["b"]#1b
+  
+  #Calculating Model 2 => MANDATORY
+  #1
+  linear_model <- lm(log(K2) ~ log(N), lang_data)
+  a_initial    <- exp(coef(linear_model)[1])
+  b_initial    <- coef(linear_model)[2]
+  #2 f(n) = an^b
+  nonlinear_model <- nls(K2 ~ a * N^b, data=lang_data,
+                         start=list(a=a_initial, b=b_initial), trace = TRUE)
+  #3
+  nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "2",
+                                            a_initial=a_initial, b_initial=b_initial)
+  #4
+  AICVector[4]       <- AIC(nonlinear_model)#AIC
+  RSSVector[4]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICDeltaVector[4]  <- "-"#TODO
+  ParameterVector[3] <- coef(nonlinear_model)["a"]#2a
+  ParameterVector[4] <- coef(nonlinear_model)["b"]#2b
+  
+  #Calculating Model 3 => MANDATORY
+  #1
+  linear_model <- lm(log(K2) ~ N, lang_data)
+  a_initial    <- exp(coef(linear_model)[1])
+  c_initial    <- coef(linear_model)[2]
+  #2 f(n) = ae^{cn}
+  nonlinear_model <- nls(K2 ~ a * exp(c * N), data=lang_data,
+                         start=list(a=a_initial, c=c_initial), trace = TRUE)
+  #3
+  nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "3",
+                                            a_initial=a_initial, c_initial=c_initial)
+  
+  RSSVector[5]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[5]       <- AIC(nonlinear_model)#AIC
+  AICDeltaVector[5]  <- "-"#TODO
+  ParameterVector[5] <- coef(nonlinear_model)["a"]#3a
+  ParameterVector[6] <- coef(nonlinear_model)["c"]#3c
+  
+  #Calculating Model 4 => NEW
+  #1
+  linear_model <- lm(K2 ~ log(N), lang_data)
+  a_initial    <- exp(coef(linear_model)[1])
+  #2 f(n) = a*log(n)
+  nonlinear_model <- nls(K2 ~ a * log(N), data=lang_data,
+                         start=list(a=a_initial), trace=TRUE)
+  #3 
+  nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "4",
+                                            a_initial=a_initial)
+  #4
+  RSSVector[6]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[6]       <- AIC(nonlinear_model)#AIC
+  AICDeltaVector[6]  <- "-"
+  ParameterVector[7] <- coef(nonlinear_model)["a"]#4a
+  
+  #Calculating Model 1+ => MANDATORY
+  #1
+  linear_model <- lm(log(K2) ~ log(N), lang_data)
+  b_initial    <- coef(linear_model)[2]
+  d_initial    <- 0 #idk what to put here tbh tbh
+  #2 f(n) = (n/2)^b
+  nonlinear_model <- nls(K2 ~ (N / 2)^b + d, data=lang_data,
+                         start=list(b=b_initial, d=d_initial), trace=TRUE)
+  #3 
+  nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "1+",
+                                            b_initial=b_initial, d_initial=d_initial)
+  #4
+  RSSVector[7]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[7]       <- AIC(nonlinear_model)#AIC
+  AICDeltaVector[7]  <- "-"
+  ParameterVector[8] <- coef(nonlinear_model)["b"]#1+b
+  ParameterVector[9] <- coef(nonlinear_model)["d"]#1+d
+  
+  #Calculating Model 2+ => ADVANCED
+  RSSVector[8]        <- "-"
+  AICVector[8]        <- "-"
+  AICDeltaVector[8]   <- "-"
+  ParameterVector[10] <- "-"#2+a
+  ParameterVector[11] <- "-"#2+b
+  ParameterVector[12] <- "-"#2+d
+  
+  #Calculating Model 3+ => ADVANCED
+  RSSVector[9]        <- "-"
+  AICVector[9]        <- "-"
+  AICDeltaVector[9]   <- "-"
+  ParameterVector[13] <- "-"#3+a
+  ParameterVector[14] <- "-"#3+b
+  ParameterVector[15] <- "-"#3+d
+  
+  #Calculating Model 4+ => NEW
+  #1
+  linear_model <- lm(K2 ~ log(N), lang_data)
+  a_initial    <- exp(coef(linear_model)[1])
+  d_initial    <- 0
+  #2 f(n) = a*log(n)+d
+  nonlinear_model <- nls(K2 ~ a * log(N) + d, data=lang_data,
+                         start=list(a=a_initial, d=d_initial), trace=TRUE)
+  #3 
+  nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "4+",
+                                            a_initial=a_initial, d_initial=d_initial)
+  #4
+  RSSVector[10]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[10]       <- AIC(nonlinear_model)#AIC
+  AICDeltaVector[10]  <- "-"
+  ParameterVector[16] <- coef(nonlinear_model)["a"]#4+a
+  ParameterVector[17] <- coef(nonlinear_model)["d"]#4+d
+  
+  AIC_best <- min(na.omit(as.numeric(AICVector)))
+  print(sprintf("AIC best: %f", AIC_best))
+  for (i in 2:length(AICVector)) {
+    AICDeltaVector[i] <- as.numeric(AICVector[i]) - AIC_best
+  }
+
+  akaikeInformationCriterionTable[index,] <<- AICVector
+  columnparametertable[index,]            <<- ParameterVector
+  residualStandardErrorTable[index,]      <<- RSSVector
+  aicdifferenceTable[index,]              <<- AICDeltaVector
 }
 
 source = read.table("./list.txt", 
@@ -101,44 +379,22 @@ source = read.table("./list.txt",
         )
 
 for (i in 1:nrow(source)) {
-  main(source$language[i], source$file[i]) # check your path
-  if (i >= 1) {
+  main(source$language[i], source$file[i], i) # check your path
+  if (i >= 100) {
     break
   }
 }
 
 # Print Tables
 data_overview
+residualStandardErrorTable
+akaikeInformationCriterionTable
+aicdifferenceTable
+columnparametertable
 ```
 
 
 
-3.Data Analysis
-We load the information about a collection of dependency trees from sentence in 
-Catalan and sort the matrix rows by the number of vertices increasingly.
-```{r}
-setwd("~/Desktop/University/CSN-MIRI Complex and Social Networks/Lab/Lab4")
-Catalan = read.table("./data/Catalan_dependency_tree_metrics.txt", header = FALSE)
-colnames(Catalan) = c("vertices","degree_2nd_moment", "mean_length")
-Catalan = Catalan[order(Catalan$vertices), ]
-```
-
-3.1 Preliminary visualization
-We consider the mean dependency length and create a preliminary plot once and
-again on both axes. We see that a power-law dependency between mean length
-and number of vertices is suggested in spite of the high dispersion.
-When then obtain a clearer intuition about the underlying trend that is obtained
-by averaging the mean lengths for a given number of vertices. We compare some 
-plots and gain an intuition about how far the real scaling of <d> is from a
-random linear arrangement by adding the expected mean length in that case to the
-plots. For this we consider a plot in double log scale with the averaged curve 
-and the random linear arrangement expectation. 
-For the scaling of <k^2> a suitable null model are uniformly distributed random undirected trees. f(n) can be estimated numerically by producing many of those 
-trees for a given n. These uniformly randomly labelled spanning trees are 
-generatedwith the the Aldous-Brother algorithm. An initial exploration of the 
-scaling of <k^2> is performed with its expected value in uniformly random trees 
-and the theoretical lower and upper bounds. These plots then suggest that bot 
-<d> and <k^2> grow sublinearly with n. 
 ```{r}
 #1
 png("31plots/vertices_meandependencylengths.png")
@@ -200,412 +456,6 @@ lines(Catalan$vertices,Catalan$vertices-1, col = "blue")
 dev.off()
 ```
 
-3.2 Then ensemble of models
-An ensemble of four models is considered. Furthermore a null model is
-considered as model 0. The four models are then generalized with a d term.
-
-4.Non-linear regression with R
-Here we fit the models to <k^2> as a function of n.The non-linear regression is
-invoked by nls(). Good initial values for a and b can be obtained with a double
-logarithmic transformation:log ⟨d⟩ = b log n + a′. Thereafter we perform a non
-linear regression to retrief the parameters of the linear model. There after 
-we receive the RSS and the AIC. Lastyly the parameters giving the best fit are 
-obtained.
-
-Calculating values and parameters for models 1 to 4 and 1+ to 4+
-```{r}
-setwd("~/Desktop/University/CSN-MIRI Complex and Social Networks/Lab/Lab4/data")
-library(lmtest)
 
 
-
-languages <- c("Arabic","Basque","Catalan","Chinese","Czech","English","Greek",
-               "Hungarian", "Italian", "Turkish")
-column_names <- c("Languages", "0", "1", "2", "3",
-                  "4", "1+", "2+", "3+", "4+")
-column_parameter_names <- c("Languages", "1b", "2a", "2b", "3a",
-                  "3c", "4a", "1+b", "1+d", "2+a","2+b","2+d","3+a","3+c","3+d","4+a","4+d")
-
-#s table
-residualStandardErrorTable <- data.frame(matrix(ncol = 10, nrow = 0))
-names(residualStandardErrorTable) <- column_names
-residualStandardErrorTable <- residualStandardErrorTable[1:10, ]
-residualStandardErrorTable$Languages <- languages
-
-#aic table
-akaikeInformationCriterionTable<- data.frame(matrix(ncol = 10, nrow = 0))
-names(akaikeInformationCriterionTable) <- column_names
-akaikeInformationCriterionTable <- akaikeInformationCriterionTable[1:10, ]
-akaikeInformationCriterionTable$Languages <- languages
-
-#aic delta table
-aicdifferenceTable<- data.frame(matrix(ncol = 10, nrow = 0))
-names(aicdifferenceTable) <- column_names
-aicdifferenceTable <- aicdifferenceTable[1:10, ]
-aicdifferenceTable$Languages <- languages
-
-#columnparametertable
-columnparametertable<- data.frame(matrix(ncol = 17, nrow = 0))
-names(columnparametertable) <- column_parameter_names
-columnparametertable <- columnparametertable[1:10, ]
-columnparametertable$Languages <- languages
-
-#homocesdacityCheckfunction
-homocesdasticityCheck<-function(nonlinear_model){
-  residuals_nonlinear_model <- residuals(nonlinear_model)
-  fitted_nonlinear_model <- fitted(nonlinear_model)
-  # Create a linear model for the squared residuals
-  lm_resid <- lm(residuals_nonlinear_model^2 ~ fitted_nonlinear_model)
-  # Perform the Breusch-Pagan test
-  bp_test_result <- bptest(lm_resid)
-  # Print the test result
-  print(bp_test_result)#debug
-  print(bp_test_result[1])#debug
-  print(bp_test_result[2])#debug
-  print(bp_test_result[3])#debug
-  print(bp_test_result[4])#debug
-  #TODO: Check if any is sensible here.
-  aggregation <- aggregate(Language,list(Language$vertices),mean)
-  if(bp_test_result[4] < 0.05){#if lower than 0.05 indicating the presence of   heteroscedasticity,  take aggregated values
-    #aggregation <- aggregate(. ~ vertices, data = Language, mean)
-    aggregation <- aggregate(Language,list(Language$vertices),mean)
-    
-    print("TODO:THESE HAVE TO BE CHANGED IN ACCORDANCE TO THE REQUIRED MODEL.
-          CURRENTLY THIS IS JUST MODEL 2!")
-    linear_model <- lm(log(degree_2nd_moment)~log(vertices), aggregation)
-    a_initial <- exp(coef(linear_model)[1])
-    b_initial <- coef(linear_model)[2]
-    
-    nonlinear_model <- nls(degree_2nd_moment ~ a * vertices^b, data = aggregation, start = list(a = a_initial, b = b_initial), trace = TRUE)
-    return(nonlinear_model)
-  }
-  return(nonlinear_model)
-}
-
-i <- 1
-while(i<length(languages)+1){
-  
-  RSSVector <- numeric(10)
-  AICVector <- numeric(10)
-  AICDeltaVector <- numeric(10)
-  ParameterVector <- numeric(17)
-  
-  RSSVector[1] <- languages[i]
-  AICVector[1] <- languages[i]
-  AICDeltaVector[1] <- languages[i]
-  ParameterVector[1] <- languages[i]
-  
-  print(languages[i])
-  string<-paste0(languages[i], "_dependency_tree_metrics.txt")
-  Language = read.table(string, header = FALSE)
-  colnames(Language) = c("vertices","degree_2nd_moment", "mean_length")
-  Language = Language[order(Language$vertices), ]
-  
-  #Null Model TODO
-  RSSVector[2] <- "-"
-  AICVector[2] <- "-"
-  AICDeltaVector[2] <- "-"
-  
-  #General steps:
-  #1. Calculate sensible starting values
-  #2. Calculate an initial non linear regression model 
-  #3 Check for homocesdasticity, if no take precautions
-  #4 Calculate optimal parameters and values
-  
-  #Calculating Model 1 #Mandatory
-  #1
-  linear_model <- lm(log(degree_2nd_moment)~log(vertices), Language)
-  a_initial <- exp(coef(linear_model)[1])
-  #2 f(n) = (n/2)^b
-  nonlinear_model <- nls(degree_2nd_moment~(vertices/2)^b,data=Language,
-  start <- list(b = b_initial), trace = TRUE)
-  #3 
-  nonlinear_model <- homocesdasticityCheck(nonlinear_model)
-  #4
-  RSSVector[3] <- sqrt(deviance(nonlinear_model)/df.residual(nonlinear_model))#s
-  AICVector[3] <- AIC(nonlinear_model)
-  AICDeltaVector[3] <- "-"
-  ParameterVector[2] <- coef(nonlinear_model)["b"]#1b
-  
-  #Calculating Model 2 #Mandatory
-  
-  #1
-  linear_model <- lm(log(degree_2nd_moment)~log(vertices), Language)
-  a_initial <- exp(coef(linear_model)[1])
-  b_initial <- coef(linear_model)[2]
-  #2
-  nonlinear_model <- nls(degree_2nd_moment~a*vertices^b,data=Language,
-  start <- list(a = a_initial, b = b_initial), trace = TRUE)
-  #3
-  nonlinear_model <- homocesdasticityCheck(nonlinear_model)
-  #4
-  AICVector[4] <- AIC(nonlinear_model)#AIC
-  RSSVector[4] <- sqrt(deviance(nonlinear_model)/df.residual(nonlinear_model))#s
-  AICDeltaVector[4] <- "-"#TODO
-  ParameterVector[3] <- coef(nonlinear_model)["a"]#2a
-  ParameterVector[4] <- coef(nonlinear_model)["b"]#2b
-  
-  #Calculating Model 3 #Mandatory #TODO
-  
-  #1
-  linear_model <- lm(log(degree_2nd_moment)~vertices, Language)
-  a_initial <- exp(coef(linear_model)[1])
-  c_initial <- coef(linear_model)[2]
-  #2 f(n) = ae^{cn} #E IS EXPONENT, VERTICES IS N
-  nonlinear_model <- nls(degree_2nd_moment~a*exp(c*vertices),data=Language, 
-  start <- list(a = a_initial, c = c_initial), trace = TRUE)
-  #3
-  nonlinear_model <- homocesdasticityCheck(nonlinear_model)
-  
-  RSSVector[5] <- sqrt(deviance(nonlinear_model)/df.residual(nonlinear_model))#s
-  AICVector[5] <- AIC(nonlinear_model)#AIC
-  AICDeltaVector[5] <- "-"#TODO
-  ParameterVector[5] <- coef(nonlinear_model)["a"]#3a
-  ParameterVector[6] <- coef(nonlinear_model)["c"]#3c
-  
-  #Calculating Model 4 
-  RSSVector[6] <- "-"
-  AICVector[6] <- "-"
-  AICDeltaVector[6] <- "-"
-  ParameterVector[7] <- "-"#4a
-  
-  #Calculating Model 1+ #Mandatory
-  #1
-  linear_model <- lm(log(degree_2nd_moment)~log(vertices), Language)
-  a_initial <- exp(coef(linear_model)[1])
-  d_initial_1p = 0 #idk what to put here tbh tbh
-  #2 f(n) = (n/2)^b
-  nonlinear_model <- nls(degree_2nd_moment~(vertices/2)^b+d,data=Language,
-  start <- list(b = b_initial, d=d_initial_1p), trace = TRUE)
-  #3 
-  nonlinear_model <- homocesdasticityCheck(nonlinear_model)
-  #4
-  RSSVector[7] <- sqrt(deviance(nonlinear_model)/df.residual(nonlinear_model))#s
-  AICVector[7] <- AIC(nonlinear_model)#AIC
-  AICDeltaVector[7] <- "-"
-  ParameterVector[8] <- coef(nonlinear_model)["b"]#1+b
-  ParameterVector[9] <- coef(nonlinear_model)["d"]#1+d
-  
-  #Calculating Model 2+ #Advanced Exercises #Careful Choice for initial parameters
-  RSSVector[8] <- "-"
-  AICVector[8] <- "-"
-  AICDeltaVector[8] <- "-"
-  ParameterVector[10] <- "-"#2+a
-  ParameterVector[11] <- "-"#2+b
-  ParameterVector[12] <- "-"#2+d
-  #Calculating Model 3+ #Advanced Exercises #Careful choice for initial parameters
-  RSSVector[9] <- "-"
-  AICVector[9] <- "-"
-  AICDeltaVector[9] <- "-"
-  ParameterVector[13] <- "-"#3+a
-  ParameterVector[14] <- "-"#3+b
-  ParameterVector[15] <- "-"#3+d
-  #Calculating Model 4+
-  RSSVector[10] <- "-"
-  AICVector[10] <- "-"
-  AICDeltaVector[10] <- "-"
-  ParameterVector[16] <- "-"#3+a
-  ParameterVector[17] <- "-"#3+d
-  
-  akaikeInformationCriterionTable[i,] <- AICVector
-  columnparametertable[i,] <- ParameterVector
-  residualStandardErrorTable[i,] <- RSSVector
-  aicdifferenceTable[i,] <- AICDeltaVector
-  i<-i+1
-}
-
-#print the created tables
-print(residualStandardErrorTable)
-print(akaikeInformationCriterionTable)
-print(aicdifferenceTable)
-print(columnparametertable)
-
-```
-
-
-
-Doing this for all models with parameters
-```{r}
-
-#Find initial values
-linear_model = lm(log(degree_2nd_moment)~log(vertices), Catalan)
-a_initial = exp(coef(linear_model)[1])
-b_initial = coef(linear_model)[2]
-
-#Run the nls() for the first time
-nonlinear_model = nls(degree_2nd_moment~a*vertices^b,data=Catalan,
-  start = list(a = a_initial, b = b_initial), trace = FALSE)
-nonlinear_model#debug
-class(nonlinear_model)#debug
-#terms(nonlinear_model)#debug
-
-residuals_nonlinear_model <- residuals(nonlinear_model)
-fitted_nonlinear_model <- fitted(nonlinear_model)
-# Create a linear model for the squared residuals
-lm_resid <- lm(residuals_nonlinear_model^2 ~ fitted_nonlinear_model)
-# Perform the Breusch-Pagan test
-bp_test_result <- bptest(lm_resid)
-# Print the test result
-print(bp_test_result)#debug
-if(bp_test_result < 0.05){#if lower than 0.05 indicating the presence of heteroscedasticity,  take aggregated values
-  aggregation <- aggregate(. ~ vertices, data = Catalan, mean)
-  nonlinear_model <- nls(mean_length ~ a * vertices^b, data = aggregation, start = list(a = a_initial, b = b_initial), trace = TRUE)
-}
-
-#calc the values
-deviance(nonlinear_model)#rss
-AIC(nonlinear_model)#AIC
-sqrt(deviance(nonlinear_model)/df.residual(nonlinear_model))#s
-coef(nonlinear_model)["a"]#a
-coef(nonlinear_model)["b"]#b
-```
-
-
-Trial below
-```{r}
-#1 Replacing mean_length by degree_2nd_moment
-# nls invokes the non-linear regression
-# degree_2nd_moment~a*vertices^b is the mathematical definition of the function
-# to fit
-#data = Catalan is the data that is being fitted
-#start = list(a = a_initial, b = b_initial) this is the initial value of the
-#parameters
-# trace = TRUE indicated that the progress of the optiimization alogrithm shall
-#be shown
-
-a_initial = 4
-b_initial = 4
-nonlinear_model = nls(degree_2nd_moment~a*vertices^b,data=Catalan,
-  start = list(a = a_initial, b = b_initial), trace = FALSE)
-
-#2 This finds good initial values for the non-linear regression
-#lm() is used to perform a non linear regression
-
-linear_model = lm(log(degree_2nd_moment)~log(vertices), Catalan)
-a_initial = exp(coef(linear_model)[1])
-b_initial = coef(linear_model)[2]
-
-#3
-nonlinear_model = nls(degree_2nd_moment~a*vertices^b,data=Catalan,
-  start = list(a = a_initial, b = b_initial), trace = FALSE)
-
-#Make sure that homocesdasticity holds, if not use aggregate() and not the 
-#original data
-
-#4 Obtain RSS, AIC, S, the best fit, the best fit for a and the best fit for b
-deviance(nonlinear_model)
-AIC(nonlinear_model)
-sqrt(deviance(nonlinear_model)/df.residual(nonlinear_model))
-coef(nonlinear_model)
-coef(nonlinear_model)["a"]
-coef(nonlinear_model)["b"]
-
-#5 Calculating relevant results for models with no parameters
-
-RSS <- sum((Catalan$degree_2nd_moment-(Catalan$vertices+1)/3)^2)
-RSS
-n <- length(Catalan$vertices)
-n
-p <- 0
-s <- sqrt(RSS/(n - p))
-s
-
-#6 Calculating the corresponding AIC
-
-AIC <- n*log(2*pi) + n*log(RSS/n) + n + 2*(p + 1)
-AIC
-```
-
-
-ChatGPT Implementation below
-```{r}
-# Load necessary libraries
-if (!require("stats")) install.packages("stats", dependencies=TRUE)
-library(stats)
-
-# Assume 'Catalan' is your data frame and it has been loaded correctly
-#Catalan <- read.csv("your_data_file.csv")
-
-# Initial values for parameters a and b
-a_initial = 4
-b_initial = 4
-
-# Non-linear regression model
-nonlinear_model = nls(degree_2nd_moment ~ a * vertices^b, data = Catalan,
-                      start = list(a = a_initial, b = b_initial), trace = TRUE)
-
-# Perform a linear regression on the logarithmic transformation
-linear_model = lm(log(degree_2nd_moment) ~ log(vertices), data = Catalan)
-
-# Obtain initial values from the linear model
-a_initial = exp(coef(linear_model)[1])
-b_initial = coef(linear_model)[2]
-
-# Run the non-linear regression again with new initial values
-nonlinear_model = nls(degree_2nd_moment ~ a * vertices^b, data = Catalan,
-                      start = list(a = a_initial, b = b_initial), trace = TRUE)
-
-# Calculate RSS, AIC, and standard error of residuals
-RSS <- deviance(nonlinear_model)
-AIC_value <- AIC(nonlinear_model)
-s <- sqrt(RSS / df.residual(nonlinear_model))
-
-# Print the results
-cat("RSS:", RSS, "\n")
-cat("AIC:", AIC_value, "\n")
-cat("Standard Error of Residuals:", s, "\n")
-
-# Extracting best fit parameters
-best_fit_params <- coef(nonlinear_model)
-cat("Best fit for a:", best_fit_params["a"], "\n")
-cat("Best fit for b:", best_fit_params["b"], "\n")
-
-# Calculate RSS, s2 for the model ⟨d⟩ = (n + 1)/3
-RSS_0 <- sum((Catalan$degree_2nd_moment - (Catalan$vertices + 1) / 3)^2)
-n <- length(Catalan$vertices)
-p <- 0
-s2 <- RSS_0 / (n - p)
-
-# Calculate AIC for the model ⟨d⟩ = (n + 1)/3
-AIC_0 <- n * log(2 * pi) + n * log(RSS_0 / n) + n + 2 * (p + 1)
-
-# Print the results for the model ⟨d⟩ = (n + 1)/3
-cat("\nModel ⟨d⟩ = (n + 1)/3:\n")
-cat("RSS:", RSS_0, "\n")
-cat("s^2:", s2, "\n")
-cat("AIC:", AIC_0, "\n")
-
-```
-
-4.1 Calculating values for models without parameters
-```{r}
-
-```
-
-
-4.2 Calculating the corresponding AIC
-```{r}
-
-```
-
-
-5 Results
-
-5.1 Model Selection
-For each metric, prepare:
-Seperate tables for s, AIC, AIC Delta
-Tables with the values of the parameters ogiving the best fir for each model
-```{r}
-
-```
-
-
-5.2 Final visualization
-For each language plot the empirical data and the curve for the best fit. 
-```{r}
-#Example from assignment sheet
-plot(log(Catalan$vertices), log(Catalan$mean_length),
-       xlab = "log(vertices)", ylab = "log(mean dependency length)")
-lines(log(Catalan$vertices), log(fitted(nonlinear_model)), col = "green")
-```
 
