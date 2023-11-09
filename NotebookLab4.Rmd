@@ -12,29 +12,29 @@ output: html_document
 library(dplyr)
 library(tidyr)
 library(lmtest)
+library(xtable)
 
 # functions
 
 homocesdasticity_check <- function(lang_data, nonlinear_model, mdl,
                                    a_initial=0, b_initial=0,
-                                   c_initial=0, d_initial=0) {
+                                   c_initial=0, d_initial=0, parameters=NULL, lang="lang") {
   print(sprintf("Model: %s", mdl))
   
-  residuals_nonlinear_model <- residuals(nonlinear_model)
-  fitted_nonlinear_model    <- fitted(nonlinear_model)
-  
   # Create a linear model for the squared residuals
-  lm_resid <- lm(residuals_nonlinear_model^2 ~ fitted_nonlinear_model)
+  #lm_resid <- lm(residuals(nonlinear_model)^2 ~ fitted(nonlinear_model)) # breusch pagan
+  aux_model <- lm(residuals(nonlinear_model)^2 ~ N + I(N^2), data=lang_data) # white
   
-  # Perform the Breusch-Pagan test
-  bp_test_result <- bptest(lm_resid)
+  # Perform the White test (Breusch-Pagan)
+  #bp_test_result <- bptest(lm_resid) # breusch pagan
+  bp_test_result <- bptest(aux_model) # white
   
   show_plot_1  <- FALSE
   show_plot_2  <- FALSE
   # greater than 0.05 indicating the presence of heteroscedasticity, take aggregated values
   if(bp_test_result[4] > 0.05) {
     print("use aggregate")
-    if (agg_count <= 0) {
+    if (agg_count <= 0) { # counts the number of times that performed aggregation should be visually checked
       show_plot_1  <- TRUE
       agg_count   <<- agg_count + 1
     }
@@ -64,37 +64,51 @@ homocesdasticity_check <- function(lang_data, nonlinear_model, mdl,
       #a_initial    <- coef(linear_model)[1]
       result_model <- nls(K2 ~ a * log(N), data=aggregation,
                           start=list(a=a_initial), trace=trace)
+    } else if (mdl == "5") {
+      linear_model <- lm(log(K2) ~ N, aggregation)
+      a_initial    <- parameters[3]
+      b_initial    <- parameters[4]
+      c_initial    <- coef(linear_model)[2]
+      result_model <- nls(K2 ~ a * I(N^b) * exp(c * N), data=aggregation,
+                          start=list(a=a_initial, b=b_initial, c=c_initial), trace=trace)
     } else if (mdl == "1+") {
-      linear_model <- lm(log(K2) ~ log(N), aggregation)
-      b_initial    <- coef(linear_model)[2]
+      b_initial    <- parameters[2]
       d_initial    <- 0
       result_model <- nls(K2 ~ (N / 2)^b + d, data=aggregation,
                           start=list(b=b_initial, d=d_initial), trace=trace)
     } else if (mdl == "2+") {
-      linear_model <- lm(log(K2) ~ log(N), aggregation)
-      a_initial    <- exp(coef(linear_model)[1])
-      b_initial    <- coef(linear_model)[2]
+      a_initial    <- parameters[3]
+      b_initial    <- parameters[4]
       d_initial    <- 0
-      result_model <- nls(K2 ~ a * N^b + d, data=aggregation,
-                          start=list(a=a_initial, b=b_initial, d=d_initial), trace=trace)
+      result_model <- nls(K2 ~ a * I(N^b) + d, data=aggregation,
+                          start=list(a=a_initial, b=b_initial, d=d_initial), trace=trace, algorithm="port", lower=0,
+                          control=nls.control(maxiter=100))
     } else if (mdl == "3+") {
-      linear_model <- lm(log(K2) ~ N, aggregation)
-      a_initial    <- exp(coef(linear_model)[1])
-      c_initial    <- coef(linear_model)[2]
+      a_initial    <- parameters[5]
+      c_initial    <- parameters[6]
       d_initial    <- 0
       result_model <- nls(K2 ~ a * exp(c * N) + d, data=aggregation,
-                          start=list(a=a_initial, c=c_initial, d=d_initial), trace=trace)
+                          start=list(a=a_initial, c=c_initial, d=d_initial), trace=trace, algorithm="port", lower=0,
+                          control=nls.control(maxiter=100))
     } else if (mdl == "4+") {
-      linear_model <- lm(K2 ~ log(N), aggregation)
-      a_initial    <- exp(coef(linear_model)[1])
-      #a_initial    <- coef(linear_model)[1]
+      a_initial    <- parameters[7]
       d_initial    <- 0
       result_model <- nls(K2 ~ a * log(N) + d, data=aggregation,
                           start=list(a=a_initial, d=d_initial), trace=trace)
-    }
+    } else if (mdl == "5+") {
+      linear_model <- lm(log(K2) ~ N, aggregation)
+      a_initial    <- exp(coef(linear_model)[1])#ParameterVector[8]
+      b_initial    <- coef(linear_model)[2]#ParameterVector[9]
+      c_initial    <- coef(linear_model)[2]#ParameterVector[10]
+      d_initial    <- 0
+      #2 f(n) = a*n^be^{cn}
+      result_model <- nls(K2 ~ a * I(N^b) * exp(c * N) + d, data=aggregation,
+                             start=list(a=a_initial, b=b_initial, c=c_initial, d=d_initial), trace=trace,algorithm = "port",
+                             lower=c(a=0, b=0), control = nls.control(maxiter = 1000,tol = 1e-5,warnOnly=TRUE))
+      }
   } else {
     print("no aggregate")
-    if (no_agg_count <= 0) {
+    if (no_agg_count <= 0) { # counts the number of times that no performed aggregation should be visually checked
       show_plot_2    <- TRUE
       no_agg_count  <<- no_agg_count + 1
     }
@@ -102,7 +116,7 @@ homocesdasticity_check <- function(lang_data, nonlinear_model, mdl,
     result_model <- nonlinear_model
   }
   
-  # plot data using old values
+  # plot data using old values (only to visually check why aggregation was performed and why not)
   # * in case of aggregation to be able to compare results with aggregation
   # * in case of no aggregation to confirm that aggregation was not needed
   if (show_plot_1 | show_plot_2) {
@@ -123,6 +137,11 @@ homocesdasticity_check <- function(lang_data, nonlinear_model, mdl,
     } else if (mdl == "4") { # f(n) = a*log(n)
       a <- coef(nonlinear_model)["a"]
       lines(lang_data$N, a * log(lang_data$N), type="l", col="red")
+    } else if (mdl == "5") {
+      a <- coef(nonlinear_model)["a"]
+      b <- coef(nonlinear_model)["b"]
+      c <- coef(nonlinear_model)["c"]
+      lines(lang_data$N, a * I(lang_data$N^b) * exp(c * lang_data$N), type="l", col="red")
     } else if (mdl == "1+") { # f(n) = (n/2)^b+d
       b <- coef(nonlinear_model)["b"]
       d <- coef(nonlinear_model)["d"]
@@ -141,6 +160,12 @@ homocesdasticity_check <- function(lang_data, nonlinear_model, mdl,
       a <- coef(nonlinear_model)["a"]
       d <- coef(nonlinear_model)["d"]
       lines(lang_data$N, a * log(lang_data$N) + d, type="l", col="red")
+    } else if (mdl == "5+") {
+      a <- coef(nonlinear_model)["a"]
+      b <- coef(nonlinear_model)["b"]
+      c <- coef(nonlinear_model)["c"]
+      d <- coef(nonlinear_model)["d"]
+      lines(lang_data$N, a * I(lang_data$N^b) * exp(c * lang_data$N) + d, type="l", col="red")
     }
   }
 
@@ -162,6 +187,11 @@ homocesdasticity_check <- function(lang_data, nonlinear_model, mdl,
     } else if (mdl == "4") { # f(n) = a*log(n)
       a <- coef(result_model)["a"]
       lines(aggregation$N, a * log(aggregation$N), type="l", col="red")
+    } else if (mdl == "5") {
+      a <- coef(result_model)["a"]
+      b <- coef(result_model)["b"]
+      c <- coef(result_model)["c"]
+      lines(aggregation$N, a * I(aggregation$N^b) * exp(c * aggregation$N), type="l", col="red")
     } else if (mdl == "1+") { # f(n) = (n/2)^b
       b <- coef(result_model)["b"]
       d <- coef(result_model)["d"]
@@ -180,6 +210,12 @@ homocesdasticity_check <- function(lang_data, nonlinear_model, mdl,
       a <- coef(result_model)["a"]
       d <- coef(result_model)["d"]
       lines(aggregation$N, a * log(aggregation$N) + d, type="l", col="red")
+    } else if (mdl == "5+") {
+      a <- coef(result_model)["a"]
+      b <- coef(result_model)["b"]
+      c <- coef(result_model)["c"]
+      d <- coef(result_model)["d"]
+      lines(aggregation$N, a * I(aggregation$N^b) * exp(c * aggregation$N) + d, type="l", col="red")
     }
   }
   
@@ -196,32 +232,32 @@ data_overview <- data.frame(Language=character(),
                             stringsAsFactors=FALSE)
 
 column_names           <- c("Languages", "0", "1", "2", "3",
-                            "4", "1+", "2+", "3+", "4+")
+                            "4", "5", "1+", "2+", "3+", "4+", "5+")
 column_parameter_names <- c("Languages", "1b", "2a", "2b", "3a",
-                            "3c", "4a", "1+b", "1+d", "2+a", "2+b",
-                            "2+d", "3+a", "3+c", "3+d", "4+a", "4+d")
+                            "3c", "4a", "5a", "5b", "5c", "1+b", "1+d", "2+a", "2+b",
+                            "2+d", "3+a", "3+c", "3+d", "4+a", "4+d", "5+a", "5+b", "5+c", "5+d")
 
 # s table
-residualStandardErrorTable <- data.frame(matrix(ncol = 10, nrow = 0))
+residualStandardErrorTable <- data.frame(matrix(ncol = 12, nrow = 0))
 names(residualStandardErrorTable) <- column_names
 
 # AIC table
-akaikeInformationCriterionTable<- data.frame(matrix(ncol = 10, nrow = 0))
+akaikeInformationCriterionTable<- data.frame(matrix(ncol = 12, nrow = 0))
 names(akaikeInformationCriterionTable) <- column_names
 
 # AIC delta table
-aicdifferenceTable<- data.frame(matrix(ncol = 10, nrow = 0))
+aicdifferenceTable<- data.frame(matrix(ncol = 12, nrow = 0))
 names(aicdifferenceTable) <- column_names
 
 # column parameter table
-columnparametertable<- data.frame(matrix(ncol = 17, nrow = 0))
+columnparametertable<- data.frame(matrix(ncol = 24, nrow = 0))
 names(columnparametertable) <- column_parameter_names
 
 # main
 
 agg_count    <- 1
 no_agg_count <- 1
-trace        <- FALSE # set to TRUE to print traces of regression
+trace        <- FALSE # set to TRUE to print traces of all regressions
 
 main <- function(lang, filename, index) {
   # SECTION: load data
@@ -234,7 +270,7 @@ main <- function(lang, filename, index) {
                           (lang_data$K2 <= (lang_data$N - 1))
   #print(head(lang_data))
   print(lang)
-  #print(table(lang_data$Validation))
+  print(table(lang_data$Validation))
   
   # calculate overview data
   n        <- length(lang_data$N)
@@ -250,11 +286,11 @@ main <- function(lang, filename, index) {
                                                    mu_k2,
                                                    sigma_k2)
   
-  # thomas code here
-  RSSVector       <- numeric(10)
-  AICVector       <- numeric(10)
-  AICDeltaVector  <- numeric(10)
-  ParameterVector <- numeric(17)
+  # create result vectors (overwritten for each language / iteration)
+  RSSVector       <- numeric(12)
+  AICVector       <- numeric(12)
+  AICDeltaVector  <- numeric(12)
+  ParameterVector <- numeric(24)
   
   RSSVector[1]       <- lang
   AICVector[1]       <- lang
@@ -262,7 +298,8 @@ main <- function(lang, filename, index) {
   ParameterVector[1] <- lang
   
   mean_values <- aggregate(lang_data, list(lang_data$N), mean)
-  var_values  <- aggregate(lang_data, list(lang_data$N), var)
+  
+  # ---- Model Implementations ---- #
   
   # Null Model
   # f(n) = (1 - 1 / N) * (5 - 6 / N)
@@ -282,7 +319,7 @@ main <- function(lang, filename, index) {
   linear_model <- lm(log(K2) ~ log(N), lang_data)
   b_initial    <- coef(linear_model)[2]
   #2 f(n) = (n/2)^b
-  nonlinear_model <- nls(K2 ~ (N / 2)^b, data=lang_data,
+  nonlinear_model <- nls(K2 ~ I((N / 2)^b), data=lang_data,
                          start=list(b=b_initial), trace = trace)
   #3 
   nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "1",
@@ -298,7 +335,7 @@ main <- function(lang, filename, index) {
   a_initial    <- exp(coef(linear_model)[1])
   b_initial    <- coef(linear_model)[2]
   #2 f(n) = an^b
-  nonlinear_model <- nls(K2 ~ a * N^b, data=lang_data,
+  nonlinear_model <- nls(K2 ~ a * I(N^b), data=lang_data,
                          start=list(a=a_initial, b=b_initial), trace = trace)
   #3
   nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "2",
@@ -320,7 +357,7 @@ main <- function(lang, filename, index) {
   #3
   nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "3",
                                             a_initial=a_initial, c_initial=c_initial)
-  
+  #4
   RSSVector[5]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
   AICVector[5]       <- AIC(nonlinear_model)#AIC
   ParameterVector[5] <- coef(nonlinear_model)["a"]#3a
@@ -330,7 +367,6 @@ main <- function(lang, filename, index) {
   #1
   linear_model <- lm(K2 ~ log(N), lang_data)
   a_initial    <- exp(coef(linear_model)[1])
-  #a_initial    <- coef(linear_model)[1]
   #2 f(n) = a*log(n)
   nonlinear_model <- nls(K2 ~ a * log(N), data=lang_data,
                          start=list(a=a_initial), trace=trace)
@@ -342,85 +378,129 @@ main <- function(lang, filename, index) {
   AICVector[6]       <- AIC(nonlinear_model)#AIC
   ParameterVector[7] <- coef(nonlinear_model)["a"]#4a
   
+  #Calculating Model 5 => NEW
+  #1
+  linear_model <- lm(log(K2) ~ N, lang_data)
+  a_initial    <- ParameterVector[3]
+  b_initial    <- ParameterVector[4]
+  c_initial    <- coef(linear_model)[2]
+  #2 f(n) = a*n^be^{cn}
+  nonlinear_model <- nls(K2 ~ a * I(N^b) * exp(c * N), data=lang_data,
+                         start=list(a=a_initial, b=b_initial, c=c_initial), trace=trace)
+  #3 
+  nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "5",
+                                            a_initial=a_initial, b_initial=b_initial, c_initial=c_initial, parameters=ParameterVector)
+  #4
+  RSSVector[7]        <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[7]        <- AIC(nonlinear_model)#AIC
+  ParameterVector[8]  <- coef(nonlinear_model)["a"]#5a
+  ParameterVector[9]  <- coef(nonlinear_model)["b"]#5b
+  ParameterVector[10] <- coef(nonlinear_model)["c"]#5c
+  
   #Calculating Model 1+ => MANDATORY
   #1
-  linear_model <- lm(log(K2) ~ log(N), lang_data)
-  b_initial    <- coef(linear_model)[2]
-  d_initial    <- 0 #idk what to put here tbh tbh
+  b_initial    <- ParameterVector[2]
+  d_initial    <- 0
   #2 f(n) = (n/2)^b
-  nonlinear_model <- nls(K2 ~ (N / 2)^b + d, data=lang_data,
+  nonlinear_model <- nls(K2 ~ I((N / 2)^b) + d, data=lang_data,
                          start=list(b=b_initial, d=d_initial), trace=trace)
   #3 
   nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "1+",
-                                            b_initial=b_initial, d_initial=d_initial)
+                                            b_initial=b_initial, d_initial=d_initial, parameters=ParameterVector)
   #4
-  RSSVector[7]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
-  AICVector[7]       <- AIC(nonlinear_model)#AIC
-  ParameterVector[8] <- coef(nonlinear_model)["b"]#1+b
-  ParameterVector[9] <- coef(nonlinear_model)["d"]#1+d
+  RSSVector[8]        <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[8]        <- AIC(nonlinear_model)#AIC
+  ParameterVector[11] <- coef(nonlinear_model)["b"]#1+b
+  ParameterVector[12] <- coef(nonlinear_model)["d"]#1+d
   
   #Calculating Model 2+ => ADVANCED
   #1
-  linear_model <- lm(log(K2) ~ log(N), lang_data)
-  a_initial    <- exp(coef(linear_model)[1])
-  b_initial    <- coef(linear_model)[2]
-  d_initial    <- 0.5
+  a_initial    <- ParameterVector[3]
+  b_initial    <- ParameterVector[4]
+  d_initial    <- 0
   #2 f(n) = an^b+d
-  #nonlinear_model <- nls(K2 ~ a * N^b + d, data=mean_values,
-  #                       start=list(a=a_initial, b=b_initial, d=d_initial), trace=trace)
+  nonlinear_model <- nls(K2 ~ a * I(N^b) + d, data=lang_data,
+                         start=list(a=a_initial, b=b_initial, d=d_initial), trace=trace, algorithm="port", lower=0,
+                         control=nls.control(maxiter=100))
   #3 
-  #nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "2+",
-  #                                          a_initial=a_initial, b_initial=b_initial,
-  #                                          d_initial=d_initial)
+  nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "2+",
+                                            a_initial=a_initial, b_initial=b_initial,
+                                            d_initial=d_initial, parameters=ParameterVector)
   #4
-  RSSVector[8]        <- "-"#sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
-  AICVector[8]        <- "-"#AIC(nonlinear_model)#AIC
-  ParameterVector[10] <- "-"#coef(nonlinear_model)["a"]#2+a
-  ParameterVector[11] <- "-"#coef(nonlinear_model)["b"]#2+b
-  ParameterVector[12] <- "-"#coef(nonlinear_model)["d"]#2+d
+  RSSVector[9]        <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[9]        <- AIC(nonlinear_model)#AIC
+  ParameterVector[13] <- coef(nonlinear_model)["a"]#2+a
+  ParameterVector[14] <- coef(nonlinear_model)["b"]#2+b
+  ParameterVector[15] <- coef(nonlinear_model)["d"]#2+d
   
   #Calculating Model 3+ => ADVANCED
-  a_initial    <- exp(coef(linear_model)[1])
-  c_initial    <- coef(linear_model)[2]
+  a_initial    <- ParameterVector[5]
+  c_initial    <- ParameterVector[6]
   d_initial    <- 0
   #2 f(n) = a*e^{cn}+d
-  #nonlinear_model <- nls(K2 ~ a * exp(c * N) + d, data=lang_data,
-  #                       start=list(a=a_initial, c=c_initial, d=d_initial), trace=trace)
+  nonlinear_model <- nls(K2 ~ a * exp(c * N) + d, data=lang_data,
+                         start=list(a=a_initial, c=c_initial, d=d_initial), trace=trace, algorithm="port", lower=0,
+                         control=nls.control(maxiter=100))
   #3 
-  #nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "2+",
-  #                                          a_initial=a_initial, c_initial=c_initial,
-  #                                          d_initial=d_initial)
+  nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "3+",
+                                            a_initial=a_initial, c_initial=c_initial,
+                                            d_initial=d_initial, parameters=ParameterVector)
   #4
-  RSSVector[9]        <- "-"#sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
-  AICVector[9]        <- "-"#AIC(nonlinear_model)#AIC
-  ParameterVector[13] <- "-"#coef(nonlinear_model)["a"]#3+a
-  ParameterVector[14] <- "-"#coef(nonlinear_model)["c"]#3+c
-  ParameterVector[15] <- "-"#coef(nonlinear_model)["d"]#3+d
+  RSSVector[10]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[10]       <- AIC(nonlinear_model)#AIC
+  ParameterVector[16] <- coef(nonlinear_model)["a"]#3+a
+  ParameterVector[17] <- coef(nonlinear_model)["c"]#3+c
+  ParameterVector[18] <- coef(nonlinear_model)["d"]#3+d
   
   #Calculating Model 4+ => NEW
   #1
-  linear_model <- lm(K2 ~ log(N), lang_data)
-  a_initial    <- exp(coef(linear_model)[1])
-  #a_initial    <- coef(linear_model)[1]
+  a_initial    <- ParameterVector[7]
   d_initial    <- 0
   #2 f(n) = a*log(n)+d
   nonlinear_model <- nls(K2 ~ a * log(N) + d, data=lang_data,
                          start=list(a=a_initial, d=d_initial), trace=trace)
   #3 
   nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "4+",
-                                            a_initial=a_initial, d_initial=d_initial)
+                                            a_initial=a_initial, d_initial=d_initial, parameters=ParameterVector,
+                                            lang=lang)
   #4
-  RSSVector[10]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
-  AICVector[10]       <- AIC(nonlinear_model)#AIC
-  ParameterVector[16] <- coef(nonlinear_model)["a"]#4+a
-  ParameterVector[17] <- coef(nonlinear_model)["d"]#4+d
+  RSSVector[11]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[11]       <- AIC(nonlinear_model)#AIC
+  ParameterVector[19] <- coef(nonlinear_model)["a"]#4+a
+  ParameterVector[20] <- coef(nonlinear_model)["d"]#4+d
   
+  #Calculating Model 5+ => NEW
+  #1
+  linear_model <- lm(log(K2) ~ N, mean_values)
+  a_initial    <- ParameterVector[8]
+  b_initial    <- ParameterVector[9]
+  c_initial    <- ParameterVector[10]
+  d_initial    <- 0
+  #2 f(n) = a*n^be^{cn}
+  nonlinear_model <- nls(K2 ~ a * I(N^b) * exp(c * N) + d, data=mean_values,
+                         start=list(a=a_initial, b=b_initial, c=c_initial, d=d_initial), trace=trace,algorithm = "port",
+                         control = nls.control(maxiter = 1000,tol = 1e-5,warnOnly=TRUE))
+  #3 We are doing this with the aggregated data regardless because it will not work otherwise.
+  #  Therefore we do not check for homocedas[...] here. 
+  #nonlinear_model <- homocesdasticity_check(lang_data, nonlinear_model, "5+",
+  #                                          a_initial=a_initial, b_initial=b_initial, c_initial=c_initial, d_initial=d_initial)
+  #4
+  RSSVector[12]       <- sqrt(deviance(nonlinear_model) / df.residual(nonlinear_model))#s
+  AICVector[12]       <- AIC(nonlinear_model)#AIC
+  ParameterVector[21] <- coef(nonlinear_model)["a"]#5a
+  ParameterVector[22] <- coef(nonlinear_model)["b"]#5b
+  ParameterVector[23] <- coef(nonlinear_model)["c"]#5c
+  ParameterVector[24] <- coef(nonlinear_model)["d"]#5d
+  
+  # calculate best model for current language (lowest AIC)
   AIC_best <- min(na.omit(as.numeric(AICVector)))
+  print(AICVector)
   print(sprintf("AIC best: %f", AIC_best))
   for (i in 2:length(AICVector)) {
     AICDeltaVector[i] <- as.numeric(AICVector[i]) - AIC_best
   }
 
+  # add results to tables
   akaikeInformationCriterionTable[index,] <<- AICVector
   columnparametertable[index,]            <<- ParameterVector
   residualStandardErrorTable[index,]      <<- RSSVector
@@ -434,7 +514,7 @@ source = read.table("./list.txt",
 
 for (i in 1:nrow(source)) {
   main(source$language[i], source$file[i], i) # check your path
-  if (i >= 100) {
+  if (i >= 100) { # debug
     break
   }
 }
@@ -445,32 +525,32 @@ residualStandardErrorTable
 akaikeInformationCriterionTable
 aicdifferenceTable
 columnparametertable
-```
 
-```{r}
 mdl_convert  <- c(
-  "0" = "Null",
-  "1" = "1",
-  "2" = "2",
-  "3" = "3",
-  "4" = "4",
-  "5" = "1+",
-  "6" = "2+",
-  "7" = "3+",
-  "8" = "4+"
+  "0"  = "Null",
+  "1"  = "1",
+  "2"  = "2",
+  "3"  = "3",
+  "4"  = "4",
+  "5"  = "5",
+  "6"  = "1+",
+  "7"  = "2+",
+  "8"  = "3+",
+  "9"  = "4+",
+  "10" = "5+"
 )
-
-# average AIC differences for each model
-for (i in 2:10) {
-  print(sprintf("Model: %s - %f", mdl_convert[as.character(i-2)], sum(as.numeric(aicdifferenceTable[, i]))/10))
-}
 ```
 
-
 ```{r}
+for (i in 2:12) {
+  print(sprintf("Model: %s - %f", mdl_convert[as.character(i-2)], sum(as.numeric(aicdifferenceTable[, i]))/11))
+}
+
 best_indices <- data.frame(which(aicdifferenceTable == 0, arr.ind=TRUE))
 best_indices <- best_indices[order(best_indices$row), ]
+best_indices
 
+# plot the best model for each language
 plot_res <- function(lang, filename, i) {
   mdl <- best_indices[i, ]$col
   print(sprintf("%s, %i", lang, mdl))
@@ -480,34 +560,47 @@ plot_res <- function(lang, filename, i) {
   colnames(lang_data)  <- c("N", "K2", "D")
   lang_data            <- lang_data[order(lang_data$N), ]
   
+  #png(filename=paste("./assets/", lang, "_res.png", sep=""))
   plot(log(lang_data$N), log(lang_data$K2),
        main=sprintf("%s - Model %s", lang, mdl_convert[as.character(mdl-2)]),
        xlab="log(vertices)", ylab="log(k2)")
-    if (mdl == 2) { # f(n) = (1-1/n)*(5-6/n)
+    if (mdl == 2) { # null
       lines(log(lang_data$N), log((1 - 1 / lang_data$N) * (5 - 6 / lang_data$N)), type="l", col="red")
-    } else if (mdl == 3) { # f(n) = (n/2)^b
+    } else if (mdl == 3) { # 1
       b <- as.numeric(columnparametertable[i, 2])
       lines(log(lang_data$N), log((lang_data$N / 2)^b), type="l", col="red")
-    } else if (mdl == 4) { # f(n) = an^b
+    } else if (mdl == 4) { # 2
       a <- as.numeric(columnparametertable[i, 3])
       b <- as.numeric(columnparametertable[i, 4])
       lines(log(lang_data$N), log(a * lang_data$N^b), type="l", col="red")
-    } else if (mdl == 5) { # f(n) = ae^{cn}
+    } else if (mdl == 5) { # 3
       a <- as.numeric(columnparametertable[i, 5])
       c <- as.numeric(columnparametertable[i, 6])
       lines(log(lang_data$N), log(a * exp(c * lang_data$N)), type="l", col="red")
-    } else if (mdl == 6) { # f(n) = a*log(n)
+    } else if (mdl == 6) { # 4
       a <- as.numeric(columnparametertable[i, 7])
       lines(log(lang_data$N), log(a * log(lang_data$N)), type="l", col="red")
-    } else if (mdl == 7) { # f(n) = (n/2)^b
-      b <- as.numeric(columnparametertable[i, 8])
-      d <- as.numeric(columnparametertable[i, 9])
+    } else if (mdl == 7) { # 5
+      a <- as.numeric(columnparametertable[i, 8])
+      b <- as.numeric(columnparametertable[i, 9])
+      c <- as.numeric(columnparametertable[i, 10])
+      lines(log(lang_data$N), log(a * lang_data$N^b * exp(c * lang_data$N)), type="l", col="red")
+    } else if (mdl == 8) { # 1+
+      b <- as.numeric(columnparametertable[i, 11])
+      d <- as.numeric(columnparametertable[i, 12])
       lines(log(lang_data$N), log((lang_data$N / 2)^b + d), type="l", col="red")
-    } else if (mdl == 10) { # f(n) = a*log(n)+d
-      a <- as.numeric(columnparametertable[i, 16])
-      d <- as.numeric(columnparametertable[i, 17])
+    } else if (mdl == 11) { # 4+
+      a <- as.numeric(columnparametertable[i, 19])
+      d <- as.numeric(columnparametertable[i, 20])
       lines(log(lang_data$N), log(a * log(lang_data$N) + d), type="l", col="red")
+    } else if (mdl == 12) { # 5+
+      a <- as.numeric(columnparametertable[i, 21])
+      b <- as.numeric(columnparametertable[i, 22])
+      c <- as.numeric(columnparametertable[i, 23])
+      d <- as.numeric(columnparametertable[i, 24])
+      lines(log(lang_data$N), log(a * lang_data$N^b * exp(c * lang_data$N) + d), type="l", col="red")
     }
+  #dev.off()
 }
 
 for (i in 1:nrow(source)) {
